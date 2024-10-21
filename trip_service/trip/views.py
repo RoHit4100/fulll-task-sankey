@@ -137,28 +137,35 @@ def trip_list(request):
 
 @auth
 # trip detail View with foreign Key Route Data
-def trip_detail(request, trip_id):
+def trip_detail(request):
     try:
-        # Fetch trip with its related route data using select_related
-        trip = Trip.objects.select_related('route').get(trip_id=trip_id)
-        
-        # Prepare detailed response with related route data
-        trip_data = {
-            'trip_id': trip.trip_id,
-            'user_id': trip.user_id,
-            'vehicle_id': trip.vehicle_id,
-            'driver_name': trip.driver_name,
-            'route': {
-                'route_id': trip.route.route_id,
-                'route_name': trip.route.route_name,
-                'route_origin': trip.route.route_origin,
-                'route_destination': trip.route.route_destination,
-                'route_stops': trip.route.route_stops,
+        if request.method == 'POST':
+            # First get the body data
+            data = json.loads(request.body)
+            trip_id = data.get('trip_id')
+            if not trip_id:
+                return JsonResponse({'error': 'Trip id is required'})
+            # Fetch trip with its related route data using select_related
+            trip = Trip.objects.select_related('route').get(trip_id=trip_id)
+            
+            # Prepare detailed response with related route data
+            trip_data = {
+                'trip_id': trip.trip_id,
+                'user_id': trip.user_id,
+                'vehicle_id': trip.vehicle_id,
+                'driver_name': trip.driver_name,
+                'route': {
+                    'route_id': trip.route.route_id,
+                    'route_name': trip.route.route_name,
+                    'route_origin': trip.route.route_origin,
+                    'route_destination': trip.route.route_destination,
+                    'route_stops': trip.route.route_stops,
+                }
             }
-        }
 
-        return JsonResponse({'trip': trip_data}, status=200)
-
+            return JsonResponse({'trip': trip_data}, status=200)
+        else:
+            return JsonResponse({'error': 'Only post request is accepted'}, status=400)
     except Trip.DoesNotExist:
         return JsonResponse({'error': 'Trip not found'}, status=404)
 
@@ -311,23 +318,25 @@ def is_night_time(date):
 def time_cycles(request):
     try:
         if request.method == 'POST':
-            # parse the JSON request body
+            # Parse the JSON request body
             data = json.loads(request.body)
             start_date = datetime.fromisoformat(data.get('start_date'))
             end_date = datetime.fromisoformat(data.get('end_date'))
 
-            # validate that start_date is before end_date
-            if start_date > end_date:
+            # Validate that start_date is before end_date
+            if start_date >= end_date:
                 return JsonResponse({'error': 'Please enter a valid start and end date'})
-
+            
             # Initialize lists for day and night times
             night_time = []
             day_time = []
-            current_date = start_date # taking temp variable for further processing
+            current_date = start_date  # Temporary variable for further processing
 
             # First Lap: Check if start_date is during night or day, and calculate first partial period
             if is_night_time(current_date):  # If it's night
                 night_end = current_date.replace(hour=6, minute=0, second=0, microsecond=0)
+                if night_end <= current_date:
+                    night_end += timedelta(days=1)
                 if night_end > end_date:
                     night_end = end_date
                 night_time.append({
@@ -337,6 +346,8 @@ def time_cycles(request):
                 current_date = night_end
             else:  # If it's day
                 day_end = current_date.replace(hour=21, minute=0, second=0, microsecond=0)
+                if day_end <= current_date:
+                    day_end += timedelta(days=1)
                 if day_end > end_date:
                     day_end = end_date
                 day_time.append({
@@ -347,7 +358,7 @@ def time_cycles(request):
 
             # Main Loop: Process full day (6:00 AM - 9:00 PM) and night (9:00 PM - 6:00 AM) cycles
             while current_date < end_date:
-                if current_date.hour == 6:  # Start of the day period
+                if 6 <= current_date.hour < 21:  # Day period
                     day_end = current_date.replace(hour=21, minute=0, second=0, microsecond=0)
                     if day_end > end_date:
                         day_end = end_date
@@ -356,24 +367,16 @@ def time_cycles(request):
                         "end_date": day_end.isoformat()
                     })
                     current_date = day_end
-
-                elif current_date.hour == 21:  # Start of the night period
+                else:  # Night period
                     night_end = current_date.replace(hour=6, minute=0, second=0, microsecond=0) + timedelta(days=1)
-                    if night_end  > end_date:
+                    if night_end > end_date:
                         night_end = end_date
                     night_time.append({
                         "start_date": current_date.isoformat(),
                         "end_date": night_end.isoformat()
                     })
-                    current_date = night_end 
+                    current_date = night_end
 
-                # Move forward to the next period (6:00 AM or 9:00 PM)
-                # if current_date.hour < 6:
-                #     current_date = current_date.replace(hour=6, minute=0, second=0, microsecond=0)
-                # elif current_date.hour < 21:
-                #     current_date = current_date.replace(hour=21, minute=0, second=0, microsecond=0)
-
-            print(current_date)
             # Final Lap: If there's any remaining time
             if current_date < end_date:
                 if is_night_time(current_date):
@@ -392,6 +395,8 @@ def time_cycles(request):
                 "night_time": night_time,
                 "day_time": day_time
             })
+        else:
+            return JsonResponse({'error': 'Only POST request is allowed'})
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=400)
